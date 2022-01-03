@@ -1,0 +1,5 @@
+error: At least one service is required
+ --> tests/ui/null_server.rs:2:14
+  |
+2 | enum Server {}
+  |              ^

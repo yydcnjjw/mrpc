@@ -16,3 +16,4 @@ convert_case = "0.5"
 
 [dev-dependencies]
 mrpc = { path = "../mrpc" }
+trybuild = "1.0"
