@@ -225,7 +225,7 @@ impl Service {
 
             quote! {
                 #( #attrs )*
-                #asyncness fn #ident(self: Arc<Self>,  #( #args ),*) -> #output;
+                #asyncness fn #ident(self: std::sync::Arc<Self>,  #( #args ),*) -> #output;
             }
         });
 
@@ -268,7 +268,7 @@ impl Service {
                 });
 
             quote! {
-                async fn serve(self: Arc<Self>, req: #request_ident) -> #response_ident {
+                async fn serve(self: std::sync::Arc<Self>, req: #request_ident) -> #response_ident {
                     match req {
                         #( #match_items )*
                     }
