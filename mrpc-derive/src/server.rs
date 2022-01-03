@@ -48,7 +48,18 @@ impl Parse for Server {
             enum_token: input.parse()?,
             ident: input.parse()?,
             brace_token: braced!(content in input),
-            services: content.parse_terminated(ServiceItem::parse)?,
+            services: {
+                let result = content.parse_terminated(ServiceItem::parse)?;
+
+                if result.is_empty() {
+                    return Err(syn::Error::new(
+                        content.span(),
+                        "At least one service is required",
+                    ));
+                }
+
+                result
+            },
         })
     }
 }
@@ -110,7 +121,7 @@ impl Server {
                         Self::get_service_ident(ident);
 
                     quote! {
-                        async fn #get_service_ident(self: Arc<Self>) -> mrpc::anyhow::Result<std::sync::Arc<dyn #ty>> {
+                        async fn #get_service_ident(self: std::sync::Arc<Self>) -> mrpc::anyhow::Result<std::sync::Arc<dyn #ty>> {
                             mrpc::anyhow::bail!("service is not implemented");
                         }
                     }
@@ -148,8 +159,9 @@ impl Server {
                 .collect::<Vec<_>>();
 
             quote! {
-                async fn serve(self: Arc<Self>,
-                               mut rx: mrpc::tokio::sync::mpsc::Receiver<mrpc::Message<#request_ident, #response_ident>>) {
+                async fn serve(self: std::sync::Arc<Self>,
+                               mut rx: mrpc::tokio::sync::mpsc::Receiver<mrpc::Message<#request_ident, #response_ident>>)
+                               -> mrpc::anyhow::Result<()> {
                     while let Some(msg) = rx.recv().await {
                         let resp = match msg.req {
                             #( #match_items )*
@@ -157,17 +169,17 @@ impl Server {
 
                         match resp {
                             Ok(resp) => {
-                                if let Err(_) = msg.resp.send(resp) {
-                                    println!("Send failed");
+                                if let Err(e) = msg.resp.send(resp) {
+                                    mrpc::anyhow::bail!("Send response failed");
                                 }
                             }
                             Err(e) => {
-                                println!("{}", e);
+                                mrpc::anyhow::bail!("Get response failed: {}", e);
                             }
                         }
-
-
                     }
+
+                    Ok(())
                 }
             }
         };
@@ -229,7 +241,7 @@ impl Server {
         );
 
         quote! {
-            #[derive(Debug)]
+            // #[derive(Debug)]
             // #[derive(Debug, mrpc::serde::Serialize, mrpc::serde::Deserialize)]
             // #[serde(crate = "mrpc::serde")]
             #vis enum #response_ident {
