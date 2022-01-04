@@ -71,12 +71,14 @@ impl Parse for RpcMethod {
 
 struct ServiceAttrs {
     pub derive_serde: bool,
+    pub debug: bool,
 }
 
 impl ServiceAttrs {
     fn new() -> Self {
         Self {
             derive_serde: false,
+            debug: true,
         }
     }
 }
@@ -95,6 +97,10 @@ impl From<AttributeArgs> for ServiceAttrs {
                         let ident = ident.unwrap();
                         if ident == "serde" {
                             self_.derive_serde = true;
+                        }
+
+                        if ident == "debug" {
+                            self_.debug = true;
                         }
                     }
                     syn::Meta::NameValue(_) => {}
@@ -140,65 +146,46 @@ impl Parse for Service {
 }
 
 impl Service {
-    fn rpc_idents(&self) -> Vec<&Ident> {
-        self.items.iter().map(|rpc| &rpc.sig.ident).collect()
-    }
-
-    fn rpc_args(&self) -> Vec<Vec<&PatType>> {
-        self.items
-            .iter()
-            .map(|rpc| rpc.sig.inputs.iter().collect())
-            .collect()
-    }
-
-    fn rpc_return_types(&self) -> Vec<&Type> {
-        self.items.iter().map(|rpc| &rpc.sig.output).collect()
-    }
-
     fn request_ident(&self) -> Ident {
         format_ident!("{}Request", self.ident)
+    }
+
+    fn request_item_ident(rpc_ident: &Ident) -> Ident {
+        ident_to_case(rpc_ident, Case::UpperCamel)
     }
 
     fn response_ident(&self) -> Ident {
         format_ident!("{}Response", self.ident)
     }
 
-    fn request_item_idents(&self) -> Vec<Ident> {
-        self.rpc_idents()
-            .iter()
-            .map(|ident| Self::request_item_ident(ident))
-            .collect()
-    }
-
-    fn response_item_idents(&self) -> Vec<Ident> {
-        self.rpc_idents()
-            .iter()
-            .map(|ident| Self::response_item_ident(ident))
-            .collect()
-    }
-
-    fn request_item_ident(ident: &Ident) -> Ident {
-        ident_to_case(ident, Case::UpperCamel)
-    }
-
-    fn response_item_ident(ident: &Ident) -> Ident {
-        ident_to_case(ident, Case::UpperCamel)
+    fn response_item_ident(rpc_ident: &Ident) -> Ident {
+        ident_to_case(rpc_ident, Case::UpperCamel)
     }
 
     fn client_ident(&self) -> Ident {
         format_ident!("{}Client", self.ident)
     }
 
-    fn gen_derive_serde(&self) -> Option<TokenStream2> {
-        if self.service_attrs.derive_serde {
-            Some(quote! {
-                #[derive(Debug, mrpc::serde::Serialize, mrpc::serde::Deserialize)]
-                #[serde(crate = "mrpc::serde")]
-            })
-        } else {
-            None
-        }
-    }
+    // fn gen_derive_serde(&self) -> Option<TokenStream2> {
+    //     if self.service_attrs.derive_serde {
+    //         Some(quote! {
+    //             #[derive(mrpc::serde::Serialize, mrpc::serde::Deserialize)]
+    //             #[serde(crate = "mrpc::serde")]
+    //         })
+    //     } else {
+    //         None
+    //     }
+    // }
+
+    // fn gen_derive_debug(&self) -> Option<TokenStream2> {
+    //     if self.service_attrs.derive_serde {
+    //         Some(quote! {
+    //             #[derive(Debug)]
+    //         })
+    //     } else {
+    //         None
+    //     }
+    // }
 
     fn gen_service(&self) -> TokenStream2 {
         let Self {
@@ -288,36 +275,39 @@ impl Service {
     }
 
     fn gen_request(&self) -> TokenStream2 {
-        let (derive_serde, vis, request_ident, request_item_idents, rpc_args) = (
-            self.gen_derive_serde(),
-            &self.vis,
-            self.request_ident(),
-            self.request_item_idents(),
-            self.rpc_args(),
-        );
+        let (vis, request_ident) = (&self.vis, self.request_ident());
+
+        let items = self.items.iter().map(|RpcMethod { attrs: _, sig, .. }| {
+            let (request_item_ident, args) =
+                (Self::request_item_ident(&sig.ident), sig.inputs.iter());
+
+            quote! {
+                #request_item_ident{ #( #args ),* }
+            }
+        });
 
         quote! {
-            #derive_serde
             #vis enum #request_ident {
-                #( #request_item_idents{ #( #rpc_args ),* } ),*
+                #( #items ),*
             }
         }
     }
 
     fn gen_response(&self) -> TokenStream2 {
-        let (derive_serde, vis, response_ident, response_item_idents, rpc_return_types) = (
-            self.gen_derive_serde(),
-            &self.vis,
-            self.response_ident(),
-            self.response_item_idents(),
-            self.rpc_return_types(),
-        );
+        let (vis, response_ident) = (&self.vis, self.response_ident());
+
+        let items = self.items.iter().map(|RpcMethod { attrs: _, sig, .. }| {
+            let (response_item_ident, return_type) =
+                (Self::response_item_ident(&sig.ident), &sig.output);
+
+            quote! {
+                #response_item_ident( #return_type )
+            }
+        });
 
         quote! {
-            #[derive(Debug)]
-            #derive_serde
             #vis enum #response_ident {
-                #( #response_item_idents( #rpc_return_types ) ),*
+                #( #items ),*
             }
         }
     }
@@ -357,7 +347,8 @@ impl Service {
                             Ok(o)
                         }
                         _ => {
-                            Err(mrpc::anyhow::anyhow!("response not match require {}", stringify!(#response_item_ident)))
+                            Err(mrpc::anyhow::anyhow!("response not match require {}",
+                                                      stringify!(#response_item_ident)))
                         }
                     }
                 }

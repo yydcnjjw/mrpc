@@ -213,8 +213,6 @@ impl Server {
         );
 
         quote! {
-            // #[derive(Debug, mrpc::serde::Serialize, mrpc::serde::Deserialize)]
-            // #[serde(crate = "mrpc::serde")]
             #vis enum #request_ident {
                 #( #services ),*
             }
@@ -241,9 +239,6 @@ impl Server {
         );
 
         quote! {
-            // #[derive(Debug)]
-            // #[derive(Debug, mrpc::serde::Serialize, mrpc::serde::Deserialize)]
-            // #[serde(crate = "mrpc::serde")]
             #vis enum #response_ident {
                 #( #services ),*
             }

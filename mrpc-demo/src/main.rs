@@ -70,7 +70,7 @@ async fn main() {
     let (tx, rx) = mpsc::channel(32);
 
     tokio::spawn(async move {
-        Arc::new(ServerImpl {}).serve(rx).await;
+        Arc::new(ServerImpl {}).serve(rx).await.unwrap();
     });
 
     let cli = ServerClient { sender: tx };
