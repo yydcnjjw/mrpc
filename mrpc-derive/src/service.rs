@@ -166,26 +166,9 @@ impl Service {
         format_ident!("{}Client", self.ident)
     }
 
-    // fn gen_derive_serde(&self) -> Option<TokenStream2> {
-    //     if self.service_attrs.derive_serde {
-    //         Some(quote! {
-    //             #[derive(mrpc::serde::Serialize, mrpc::serde::Deserialize)]
-    //             #[serde(crate = "mrpc::serde")]
-    //         })
-    //     } else {
-    //         None
-    //     }
-    // }
-
-    // fn gen_derive_debug(&self) -> Option<TokenStream2> {
-    //     if self.service_attrs.derive_serde {
-    //         Some(quote! {
-    //             #[derive(Debug)]
-    //         })
-    //     } else {
-    //         None
-    //     }
-    // }
+    fn poster_ident(&self) -> Ident {
+        format_ident!("{}Poster", self.ident)
+    }
 
     fn gen_service(&self) -> TokenStream2 {
         let Self {
@@ -366,6 +349,18 @@ impl Service {
             }
         }
     }
+
+    fn gen_poster(&self) -> TokenStream2 {
+        let (vis, poster_ident, request_ident, response_ident) = (
+            &self.vis,
+            self.poster_ident(),
+            self.request_ident(),
+            self.response_ident(),
+        );
+        quote! {
+            #vis trait #poster_ident: mrpc::Poster<#request_ident, #response_ident> {}
+        }
+    }
 }
 
 impl ToTokens for Service {
@@ -375,6 +370,7 @@ impl ToTokens for Service {
             self.gen_response(),
             self.gen_service(),
             self.gen_client(),
+            self.gen_poster(),
         ])
     }
 }

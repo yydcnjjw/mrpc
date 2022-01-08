@@ -5,6 +5,7 @@ pub use async_trait::async_trait;
 pub use serde;
 // use serde::{Deserialize, Serialize};
 pub use tokio;
+pub use log;
 use tokio::sync;
 
 pub struct Message<Request, Response> {

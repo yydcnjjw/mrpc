@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use mod2::*;
 use mrpc::tokio::{self, sync::mpsc};
 
 #[mrpc::service()]
@@ -49,18 +50,18 @@ mod mod2 {
 #[mrpc::server()]
 pub enum Server {
     Service1(Service1),
-    Service2(mod2::Service2),
+    Service2(Service2),
 }
 
 struct ServerImpl {}
 
 #[mrpc::async_trait]
 impl Server for ServerImpl {
-    async fn get_service_1(self: Arc<Self>) -> mrpc::anyhow::Result<Arc<dyn Service1>> {
+    async fn create_service_1(self: Arc<Self>) -> mrpc::anyhow::Result<Arc<dyn Service1>> {
         Ok(Arc::new(Service1Impl {}))
     }
 
-    async fn get_service_2(self: Arc<Self>) -> mrpc::anyhow::Result<Arc<dyn mod2::Service2>> {
+    async fn create_service_2(self: Arc<Self>) -> mrpc::anyhow::Result<Arc<dyn mod2::Service2>> {
         Ok(Arc::new(mod2::Service2Impl {}))
     }
 }

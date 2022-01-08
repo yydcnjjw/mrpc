@@ -81,8 +81,12 @@ impl Server {
         format_ident!("{}Client", self.ident)
     }
 
-    fn get_service_ident(ident: &Ident) -> Ident {
-        format_ident!("get_{}", ident_to_case(ident, Case::Snake))
+    fn create_service_ident(ident: &Ident) -> Ident {
+        format_ident!("create_{}", ident_to_case(ident, Case::Snake))
+    }
+
+    fn service_var_ident(ident: &Ident) -> Ident {
+        format_ident!("{}_var", ident_to_case(ident, Case::Snake))
     }
 
     fn service_request_ty(mut ty: Path) -> Path {
@@ -103,11 +107,14 @@ impl Server {
         ty
     }
 
-    fn gen_server(&self) -> TokenStream2 {
-        let (vis, server_ident, request_ident) =
-            (&self.vis, self.server_ident(), self.request_ident());
+    fn service_poster_ty(mut ty: Path) -> Path {
+        let mut last = ty.segments.last_mut().expect("");
+        last.ident = format_ident!("{}Poster", last.ident);
+        ty
+    }
 
-        let fn_get_services = self
+    fn gen_server_create_services(&self) -> Vec<TokenStream2> {
+        self
             .services
             .iter()
             .map(
@@ -117,77 +124,108 @@ impl Server {
                      paren_token: _,
                      ty,
                  }| {
-                    let get_service_ident =
-                        Self::get_service_ident(ident);
+                    let create_service_ident =
+                        Self::create_service_ident(ident);
 
                     quote! {
-                        async fn #get_service_ident(self: std::sync::Arc<Self>) -> mrpc::anyhow::Result<std::sync::Arc<dyn #ty>> {
+                        async fn #create_service_ident(self: std::sync::Arc<Self>) -> mrpc::anyhow::Result<std::sync::Arc<dyn #ty>> {
                             mrpc::anyhow::bail!("service is not implemented");
                         }
                     }
                 },
             )
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+    }
 
-        let fn_serve = {
-            let response_ident = self.response_ident();
-            let match_items = self
-                .services
-                .iter()
-                .map(
-                    |ServiceItem {
-                         attrs: _,
-                         ident,
-                         paren_token: _,
-                         ty: _,
-                     }| {
-                        let get_service_ident = Self::get_service_ident(ident);
+    fn gen_server_serve(&self) -> TokenStream2 {
+        let (request_ident, response_ident) = (self.request_ident(), self.response_ident());
+
+        let (service_vars, match_items): (Vec<_>, Vec<_>) = self
+            .services
+            .iter()
+            .map(
+                |ServiceItem {
+                     attrs: _,
+                     ident,
+                     paren_token: _,
+                     ty: _,
+                 }| {
+                    let create_service_ident = Self::create_service_ident(ident);
+                    let service_var_ident = Self::service_var_ident(ident);
+
+                    let service_var_ident_tmp = format_ident!("{}_tmp", service_var_ident);
+                    
+                    (
                         quote! {
-                             #request_ident::#ident(req) => {
-                                match Self::#get_service_ident(self.clone()).await {
-                                    Ok(service) => {
-                                        Ok(#response_ident::#ident(service.serve(req).await))
+                            let mut #service_var_ident = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+                        },
+                        quote! {
+                            #request_ident::#ident(req) => {
+                                let #service_var_ident_tmp = #service_var_ident.clone();
+                                let self_ = self.clone();
+                                tokio::spawn(async move {
+                                    let mut lock = #service_var_ident_tmp.lock().await;
+                                    if lock.is_none() {
+                                        *lock = Some(Self::#create_service_ident(self_).await);
                                     }
-                                    Err(e) => {
-                                        Err(mrpc::anyhow::anyhow!("{}", e))
-                                    }
-                                }
-                            }
-                        }
-                    },
-                )
-                .collect::<Vec<_>>();
 
-            quote! {
-                async fn serve(self: std::sync::Arc<Self>,
-                               mut rx: mrpc::tokio::sync::mpsc::Receiver<mrpc::Message<#request_ident, #response_ident>>)
-                               -> mrpc::anyhow::Result<()> {
-                    while let Some(msg) = rx.recv().await {
-                        let resp = match msg.req {
-                            #( #match_items )*
-                        };
-
-                        match resp {
-                            Ok(resp) => {
-                                if let Err(e) = msg.resp.send(resp) {
-                                    mrpc::anyhow::bail!("Send response failed");
-                                }
+                                    let resp = match lock.as_ref().unwrap() {
+                                        Ok(service) => {
+                                            Ok(#response_ident::#ident(service.clone().serve(req).await))
+                                        }
+                                        Err(e) => {
+                                            Err(mrpc::anyhow::anyhow!("{}", e))
+                                        }
+                                    };
+                                    
+                                    match resp {
+                                        Ok(resp) => {
+                                            if let Err(_) = msg.resp.send(resp) {
+                                                mrpc::log::warn!("Failed to send response: {}", stringify!(#ident));
+                                            }
+                                        }
+                                        Err(e) => {
+                                            mrpc::log::warn!("Failed to get response: {}", e);
+                                        }
+                                    };
+                                    
+                                });
                             }
-                            Err(e) => {
-                                mrpc::anyhow::bail!("Get response failed: {}", e);
-                            }
-                        }
-                    }
+                        },
+                    )
+                },
+            )
+            .unzip();
 
-                    Ok(())
+        quote! {
+            async fn serve(self: std::sync::Arc<Self>,
+                           mut rx: mrpc::tokio::sync::mpsc::Receiver<mrpc::Message<#request_ident, #response_ident>>)
+                           -> mrpc::anyhow::Result<()>
+            where Self: 'static {
+
+                #( #service_vars )*
+
+                while let Some(msg) = rx.recv().await {
+                    match msg.req {
+                        #( #match_items )*     
+                    };
                 }
+
+                Ok(())
             }
-        };
+        }
+    }
+
+    fn gen_server(&self) -> TokenStream2 {
+        let (vis, server_ident) = (&self.vis, self.server_ident());
+
+        let fn_create_services = self.gen_server_create_services();
+        let fn_serve = self.gen_server_serve();
 
         quote! {
             #[mrpc::async_trait]
             #vis trait #server_ident: Send + Sync {
-                #( #fn_get_services )*
+                #( #fn_create_services )*
                 #fn_serve
             }
         }
@@ -268,16 +306,19 @@ impl Server {
                 let service_client = Self::service_client_ty(ty.clone());
                 let service_request = Self::service_request_ty(ty.clone());
                 let service_response = Self::service_response_ty(ty.clone());
-                let service_poster_ident = format_ident!("{}Poster", ident);
+                let service_poster_ty = Self::service_poster_ty(ty.clone());
+                let service_poster_impl_ident = format_ident!("{}{}PosterImpl", self.server_ident(), ident);
 
                 (
                     quote! {
-                        #vis struct #service_poster_ident {
+                        #vis struct #service_poster_impl_ident {
                             pub sender: #sender_ty
                         }
 
+                        impl #service_poster_ty for #service_poster_impl_ident {}
+
                         #[mrpc::async_trait]
-                        impl mrpc::Poster<#service_request, #service_response> for #service_poster_ident {
+                        impl mrpc::Poster<#service_request, #service_response> for #service_poster_impl_ident {
                             async fn post(&self, req: #service_request,
                                           resp: mrpc::tokio::sync::oneshot::Sender<
                                                   #service_response
@@ -314,8 +355,8 @@ impl Server {
                         }
                     },
                     quote! {
-                        #vis fn #service_ident(&self) -> #service_client<#service_poster_ident> {
-                            #service_client { poster: #service_poster_ident { sender: self.sender.clone() } }
+                        #vis fn #service_ident(&self) -> #service_client<#service_poster_impl_ident> {
+                            #service_client { poster: #service_poster_impl_ident { sender: self.sender.clone() } }
                         }
                     },
                 )
@@ -323,6 +364,7 @@ impl Server {
         ).unzip();
 
         quote! {
+            #[derive(Clone)]
             #vis struct #client_ident {
                 sender: #sender_ty,
             }
