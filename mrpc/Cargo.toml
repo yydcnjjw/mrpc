@@ -5,15 +5,43 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+tcp = ["tokio/net"]
+websocket = ["tokio/net", "tokio-tungstenite/connect"]
+websocket_web = []
+
 [dependencies]
 mrpc-derive = { path = "../mrpc-derive" }
-tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+anyhow = "1.0"
+thiserror = "1.0"
+log = "0.4"
+tokio = { version = "1", default_features = false, features = ["rt-multi-thread"] }
 tokio-serde = { version = "0.8", features = ["json", "bincode"] }
 tokio-util = { version = "0.6", features = ["codec"] }
 futures = "0.3"
 async-trait = "0.1"
 
-anyhow = "1.0"
-thiserror = "1.0"
-log = "0.4"
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio-tungstenite = { version = "0.16", default_features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+send_wrapper = "0.5"
+wasm-bindgen-futures = "0.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.web-sys]
+version = "0.3"
+features = [
+  "BinaryType",
+  "Blob",
+  "ErrorEvent",
+  "FileReader",
+  "MessageEvent",
+  "ProgressEvent",
+  "WebSocket",
+]

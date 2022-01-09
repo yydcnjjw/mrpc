@@ -1,122 +1,67 @@
-use crate::common::*;
+use crate::{
+    attr::{set_only_none, IdentMeta, MessageAttr},
+    common::*,
+    rpc::{RpcAttrs, RpcMethod, RpcSignature},
+};
 use convert_case::Case;
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{format_ident, quote, ToTokens};
+use syn::Visibility;
 use syn::{
-    braced, parenthesized,
+    braced,
     parse::{Parse, ParseStream},
-    parse_macro_input, parse_quote,
-    punctuated::Punctuated,
-    spanned::Spanned,
-    token, Attribute, AttributeArgs, FnArg, NestedMeta, ReturnType, Token, Type,
+    parse_macro_input, token, Token,
 };
-use syn::{PatType, Visibility};
-
-#[allow(dead_code)]
-struct RpcSignature {
-    pub asyncness: Option<Token![async]>,
-    pub fn_token: Token![fn],
-    pub ident: Ident,
-    pub paren_token: token::Paren,
-    pub inputs: Punctuated<PatType, Token![,]>,
-    pub output: Type,
-}
-
-impl Parse for RpcSignature {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let content;
-        Ok(Self {
-            asyncness: input.parse()?,
-            fn_token: input.parse()?,
-            ident: input.parse()?,
-            paren_token: parenthesized!(content in input),
-            inputs: content.parse_terminated(|input| match FnArg::parse(input)? {
-                FnArg::Receiver(arg) => Err(syn::Error::new(
-                    arg.span(),
-                    "method args cannot start with self",
-                )),
-                FnArg::Typed(arg) => match *arg.pat {
-                    syn::Pat::Ident(_) => Ok(arg),
-                    _ => Err(syn::Error::new(
-                        arg.pat.span(),
-                        "patterns aren't allowed in RPC args",
-                    )),
-                },
-            })?,
-            output: match ReturnType::parse(input)? {
-                ReturnType::Default => parse_quote!(()),
-                ReturnType::Type(_, ty) => *ty,
-            },
-        })
-    }
-}
-
-#[allow(dead_code)]
-struct RpcMethod {
-    pub attrs: Vec<Attribute>,
-    pub sig: RpcSignature,
-    pub semi_token: Option<Token![;]>,
-}
-
-impl Parse for RpcMethod {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        Ok(Self {
-            attrs: input.call(Attribute::parse_outer)?,
-            sig: input.parse()?,
-            semi_token: input.parse()?,
-        })
-    }
-}
 
 struct ServiceAttrs {
-    pub derive_serde: bool,
-    pub debug: bool,
+    message: Option<MessageAttr>,
 }
 
 impl ServiceAttrs {
     fn new() -> Self {
-        Self {
-            derive_serde: false,
-            debug: true,
+        Self { message: None }
+    }
+
+    fn gen_message_attr(&self) -> TokenStream2 {
+        let mut token = TokenStream2::new();
+
+        if let Some(attr) = &self.message {
+            if let Some(_) = &attr.debug {
+                token.extend(quote! {
+                    #[derive(Debug)]
+                });
+            }
+
+            if let Some(_) = &attr.serde {
+                token.extend(quote! {
+                    #[derive(mrpc::serde::Serialize,mrpc::serde::Deserialize)]
+                    #[serde(crate = "mrpc::serde")]
+                });
+            }
         }
+
+        token
     }
 }
 
-impl From<AttributeArgs> for ServiceAttrs {
-    fn from(attrs: AttributeArgs) -> Self {
-        let mut self_ = Self::new();
-        for attr in attrs {
-            match attr {
-                NestedMeta::Meta(attr) => match attr {
-                    syn::Meta::Path(p) => {
-                        let ident = p.get_ident();
-                        if ident.is_none() {
-                            continue;
-                        }
-                        let ident = ident.unwrap();
-                        if ident == "serde" {
-                            self_.derive_serde = true;
-                        }
+impl Parse for ServiceAttrs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let attr_vec = input.parse_terminated::<MessageAttr, Token![,]>(MessageAttr::parse)?;
 
-                        if ident == "debug" {
-                            self_.debug = true;
-                        }
-                    }
-                    syn::Meta::NameValue(_) => {}
-                    syn::Meta::List(_) => {}
-                },
-                NestedMeta::Lit(_) => {}
-            }
+        let mut message = None;
+
+        for attr in attr_vec {
+            set_only_none(&mut message, attr, input.span())?;
         }
-        self_
+
+        Ok(Self { message })
     }
 }
 
 #[allow(dead_code)]
 struct Service {
     pub service_attrs: ServiceAttrs,
-    pub attrs: Vec<Attribute>,
     pub vis: Visibility,
     pub trait_token: Token![trait],
     pub ident: Ident,
@@ -129,7 +74,6 @@ impl Parse for Service {
         let content;
         Ok(Self {
             service_attrs: ServiceAttrs::new(),
-            attrs: input.call(Attribute::parse_outer)?,
             vis: input.parse()?,
             trait_token: input.parse()?,
             ident: input.parse()?,
@@ -173,7 +117,6 @@ impl Service {
     fn gen_service(&self) -> TokenStream2 {
         let Self {
             service_attrs: _,
-            attrs,
             vis,
             trait_token: _,
             ident,
@@ -181,7 +124,7 @@ impl Service {
             items,
         } = self;
 
-        let rpcs = items.iter().map(|RpcMethod { attrs, sig, .. }| {
+        let rpcs = items.iter().map(|RpcMethod { attrs: _, sig, .. }| {
             let RpcSignature {
                 asyncness,
                 fn_token: _,
@@ -194,7 +137,6 @@ impl Service {
             let args = inputs.iter();
 
             quote! {
-                #( #attrs )*
                 #asyncness fn #ident(self: std::sync::Arc<Self>,  #( #args ),*) -> #output;
             }
         });
@@ -248,7 +190,6 @@ impl Service {
 
         quote! {
             #[mrpc::async_trait]
-            #( #attrs )*
             #vis trait #ident: Send + Sync {
                 #( #rpcs )*
 
@@ -257,19 +198,43 @@ impl Service {
         }
     }
 
-    fn gen_request(&self) -> TokenStream2 {
-        let (vis, request_ident) = (&self.vis, self.request_ident());
+    fn gen_message_item_attr(attrs: &RpcAttrs) -> TokenStream2 {
+        let mut attr = TokenStream2::new();
+        if let Some(message) = &attrs.message {
+            if let Some(serde) = &message.serde {
+                if let IdentMeta::IdentMetaList(ml) = serde {
+                    let token = ml.list.to_token_stream();
+                    attr.extend(quote! {
+                        #[serde(#token)]
+                    })
+                }
+            }
+        }
 
-        let items = self.items.iter().map(|RpcMethod { attrs: _, sig, .. }| {
+        attr
+    }
+
+    fn gen_request(&self) -> TokenStream2 {
+        let (message_attr, vis, request_ident) = (
+            self.service_attrs.gen_message_attr(),
+            &self.vis,
+            self.request_ident(),
+        );
+
+        let items = self.items.iter().map(|RpcMethod { attrs, sig, .. }| {
             let (request_item_ident, args) =
                 (Self::request_item_ident(&sig.ident), sig.inputs.iter());
 
+            let attr = Self::gen_message_item_attr(attrs);
+
             quote! {
+                #attr
                 #request_item_ident{ #( #args ),* }
             }
         });
 
         quote! {
+            #message_attr
             #vis enum #request_ident {
                 #( #items ),*
             }
@@ -277,18 +242,26 @@ impl Service {
     }
 
     fn gen_response(&self) -> TokenStream2 {
-        let (vis, response_ident) = (&self.vis, self.response_ident());
+        let (message_attr, vis, response_ident) = (
+            self.service_attrs.gen_message_attr(),
+            &self.vis,
+            self.response_ident(),
+        );
 
-        let items = self.items.iter().map(|RpcMethod { attrs: _, sig, .. }| {
+        let items = self.items.iter().map(|RpcMethod { attrs, sig, .. }| {
             let (response_item_ident, return_type) =
                 (Self::response_item_ident(&sig.ident), &sig.output);
 
+            let attr = Self::gen_message_item_attr(attrs);
+
             quote! {
+                #attr
                 #response_item_ident( #return_type )
             }
         });
 
         quote! {
+            #message_attr
             #vis enum #response_ident {
                 #( #items ),*
             }
@@ -296,11 +269,12 @@ impl Service {
     }
 
     fn gen_client(&self) -> TokenStream2 {
-        let (vis, client_ident, request_ident, response_ident) = (
+        let (vis, client_ident, request_ident, response_ident, poster_ident) = (
             &self.vis,
             self.client_ident(),
             self.request_ident(),
             self.response_ident(),
+            self.poster_ident(),
         );
 
         let rpcs = self.items.iter().map(|RpcMethod { attrs: _, sig, .. }| {
@@ -319,7 +293,7 @@ impl Service {
             let response_item_ident = Self::response_item_ident(ident);
             quote! {
                 #vis async fn #ident(&self, #( #args ),*) -> mrpc::anyhow::Result<#output> {
-                    let (tx, rx) = mrpc::tokio::sync::oneshot::channel::<#response_ident>();
+                    let (tx, rx) = mrpc::sync::oneshot::channel::<#response_ident>();
 
                     self.poster.post(#request_ident::#request_item_ident{
                         #( #arg_pats ),*
@@ -339,12 +313,13 @@ impl Service {
         });
 
         quote! {
+            #[derive(Clone)]
             #vis struct #client_ident<Poster> {
                 pub poster: Poster,
             }
 
             impl<Poster> #client_ident<Poster>
-            where Poster: mrpc::Poster<#request_ident, #response_ident> {
+            where Poster: #poster_ident {
                 #( #rpcs )*
             }
         }
@@ -358,7 +333,7 @@ impl Service {
             self.response_ident(),
         );
         quote! {
-            #vis trait #poster_ident: mrpc::Poster<#request_ident, #response_ident> {}
+            #vis trait #poster_ident: mrpc::Poster<#request_ident, #response_ident> + Clone + Sync + Send {}
         }
     }
 }
@@ -377,6 +352,6 @@ impl ToTokens for Service {
 
 pub fn parse(attrs: TokenStream, input: TokenStream) -> TokenStream {
     let mut service = parse_macro_input!(input as Service);
-    service.service_attrs = ServiceAttrs::from(parse_macro_input!(attrs as AttributeArgs));
+    service.service_attrs = parse_macro_input!(attrs as ServiceAttrs);
     service.into_token_stream().into()
 }

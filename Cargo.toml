@@ -2,5 +2,5 @@
 members = [
   "mrpc",
   "mrpc-derive",
-  "mrpc-demo",
+  "mrpc-example",
 ]

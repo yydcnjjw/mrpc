@@ -1,0 +1,10 @@
+* Build
+#+begin_src shell
+  cargo build --target wasm32-unknown-unknown --bin wasm
+
+  wasm-bindgen ../../target/wasm32-unknown-unknown/debug/wasm.wasm --out-dir ../generated-wasm --target web
+  cd ../generated-wasm
+  cp ../wasm/index.html .
+
+  python -m http.server
+#+end_src

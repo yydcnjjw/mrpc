@@ -1,3 +1,2 @@
-* TODOs
-- [ ] service import
-- [ ] macro attr: =serde=
+* mrpc
+mrpc is an RPC framework for rust.

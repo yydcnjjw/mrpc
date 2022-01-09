@@ -1,4 +1,4 @@
-use crate::common::*;
+use crate::{common::*, attr::{MessageAttr, set_only_none}};
 use convert_case::Case;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -31,8 +31,54 @@ impl Parse for ServiceItem {
     }
 }
 
+struct ServerAttrs {
+    message: Option<MessageAttr>,
+}
+
+impl ServerAttrs {
+    fn new() -> Self {
+        Self { message: None }
+    }
+
+    fn gen_message_attr(&self) -> TokenStream2 {
+        let mut token = TokenStream2::new();
+
+        if let Some(attr) = &self.message {
+            if let Some(_) = &attr.debug {
+                token.extend(quote! {
+                    #[derive(Debug)]
+                });
+            }
+
+            if let Some(_) = &attr.serde {
+                token.extend(quote! {
+                    #[derive(mrpc::serde::Serialize,mrpc::serde::Deserialize)]
+                    #[serde(crate = "mrpc::serde")]
+                });
+            }
+        }
+
+        token
+    }
+}
+
+impl Parse for ServerAttrs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let attr_vec = input.parse_terminated::<MessageAttr, Token![,]>(MessageAttr::parse)?;
+
+        let mut message = None;
+
+        for attr in attr_vec {
+            set_only_none(&mut message, attr, input.span())?;
+        }
+
+        Ok(Self { message })
+    }
+}
+
 #[allow(dead_code)]
 struct Server {
+    pub server_attrs: ServerAttrs,
     pub vis: Visibility,
     pub enum_token: Token![enum],
     pub ident: Ident,
@@ -44,6 +90,7 @@ impl Parse for Server {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let content;
         Ok(Self {
+            server_attrs: ServerAttrs::new(),
             vis: input.parse()?,
             enum_token: input.parse()?,
             ident: input.parse()?,
@@ -157,38 +204,31 @@ impl Server {
                     
                     (
                         quote! {
-                            let mut #service_var_ident = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+                            let mut #service_var_ident = std::sync::Arc::new(mrpc::sync::Mutex::new(None));
                         },
                         quote! {
                             #request_ident::#ident(req) => {
                                 let #service_var_ident_tmp = #service_var_ident.clone();
                                 let self_ = self.clone();
-                                tokio::spawn(async move {
-                                    let mut lock = #service_var_ident_tmp.lock().await;
-                                    if lock.is_none() {
-                                        *lock = Some(Self::#create_service_ident(self_).await);
-                                    }
+                                mrpc::spawn(async move {
+                                    let service = {
+                                        let mut lock = #service_var_ident_tmp.lock().await;
+                                        if lock.is_none() {
+                                            *lock = match Self::#create_service_ident(self_).await {
+                                                Ok(service) => Some(service),
+                                                Err(e) => {
+                                                    mrpc::log::warn!("Failed to create {}: {:?}", stringify!(#ident), e);
+                                                    None
+                                                }
+                                            };
+                                        }
+                                        lock.as_ref().unwrap().clone()
+                                    };
 
-                                    let resp = match lock.as_ref().unwrap() {
-                                        Ok(service) => {
-                                            Ok(#response_ident::#ident(service.clone().serve(req).await))
-                                        }
-                                        Err(e) => {
-                                            Err(mrpc::anyhow::anyhow!("{}", e))
-                                        }
-                                    };
-                                    
-                                    match resp {
-                                        Ok(resp) => {
-                                            if let Err(_) = msg.resp.send(resp) {
-                                                mrpc::log::warn!("Failed to send response: {}", stringify!(#ident));
-                                            }
-                                        }
-                                        Err(e) => {
-                                            mrpc::log::warn!("Failed to get response: {}", e);
-                                        }
-                                    };
-                                    
+                                    let result = #response_ident::#ident(service.clone().serve(req).await);
+                                    if let Err(_) = msg.resp.send(result) {
+                                        mrpc::log::warn!("Failed to send response: {}", stringify!(#ident));
+                                    }
                                 });
                             }
                         },
@@ -199,7 +239,7 @@ impl Server {
 
         quote! {
             async fn serve(self: std::sync::Arc<Self>,
-                           mut rx: mrpc::tokio::sync::mpsc::Receiver<mrpc::Message<#request_ident, #response_ident>>)
+                           mut rx: mrpc::sync::mpsc::Receiver<mrpc::Message<#request_ident, #response_ident>>)
                            -> mrpc::anyhow::Result<()>
             where Self: 'static {
 
@@ -232,7 +272,7 @@ impl Server {
     }
 
     fn gen_request(&self) -> TokenStream2 {
-        let (vis, request_ident) = (&self.vis, self.request_ident());
+        let (message_attr, vis, request_ident) = (self.server_attrs.gen_message_attr(), &self.vis, self.request_ident());
 
         let services = self.services.iter().map(
             |ServiceItem {
@@ -251,6 +291,7 @@ impl Server {
         );
 
         quote! {
+            #message_attr
             #vis enum #request_ident {
                 #( #services ),*
             }
@@ -258,7 +299,7 @@ impl Server {
     }
 
     fn gen_response(&self) -> TokenStream2 {
-        let (vis, response_ident) = (&self.vis, self.response_ident());
+        let (message_attr, vis, response_ident) = (self.server_attrs.gen_message_attr(), &self.vis, self.response_ident());
 
         let services = self.services.iter().map(
             |ServiceItem {
@@ -277,6 +318,7 @@ impl Server {
         );
 
         quote! {
+            #message_attr
             #vis enum #response_ident {
                 #( #services ),*
             }
@@ -292,7 +334,7 @@ impl Server {
         );
 
         let sender_ty = quote! {
-            mrpc::tokio::sync::mpsc::Sender<mrpc::Message<#request_ident, #response_ident>>
+            mrpc::sync::mpsc::Sender<mrpc::Message<#request_ident, #response_ident>>
         };
 
         let (posters, rpcs): (Vec<TokenStream2>, Vec<TokenStream2>) = self.services.iter().map(
@@ -311,6 +353,7 @@ impl Server {
 
                 (
                     quote! {
+                        #[derive(Clone)]
                         #vis struct #service_poster_impl_ident {
                             pub sender: #sender_ty
                         }
@@ -320,16 +363,16 @@ impl Server {
                         #[mrpc::async_trait]
                         impl mrpc::Poster<#service_request, #service_response> for #service_poster_impl_ident {
                             async fn post(&self, req: #service_request,
-                                          resp: mrpc::tokio::sync::oneshot::Sender<
+                                          resp: mrpc::sync::oneshot::Sender<
                                                   #service_response
                                               >) -> mrpc::anyhow::Result<()> {
-                                let (tx, rx) = mrpc::tokio::sync::oneshot::channel();
+                                let (tx, rx) = mrpc::sync::oneshot::channel();
 
                                 if let Err(e) = self.sender.send(mrpc::Message {
                                     req: #request_ident::#ident(req),
                                     resp: tx
                                 }).await {
-                                    mrpc::anyhow::bail!("Send message failed: {}", e);
+                                    mrpc::anyhow::bail!("Failed to send message: {}", e);
                                 }
 
                                 match rx.await {
@@ -337,18 +380,18 @@ impl Server {
                                         match recv {
                                             #response_ident::#ident(v) => {
                                                 if let Err(e) = resp.send(v) {
-                                                    mrpc::anyhow::bail!("Send message to {} failed", stringify!(#ident));    
+                                                    mrpc::anyhow::bail!("Failed to send message to {}", stringify!(#ident));    
                                                 } else {
                                                     return Ok(())
                                                 }
                                             }
                                             _ => {
-                                                mrpc::anyhow::bail!("Response not match require {}", stringify!(#ident));
+                                                mrpc::anyhow::bail!("Failed to match response, require {}", stringify!(#ident));
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        mrpc::anyhow::bail!("Wait response failed: {}", e);
+                                        mrpc::anyhow::bail!("Failed to wait response: {}", e);
                                     }
                                 }
                             }
@@ -372,6 +415,13 @@ impl Server {
             #( #posters )*
 
             impl #client_ident {
+
+                #vis fn new(sender: #sender_ty) -> Self {
+                    Self {
+                        sender
+                    }
+                }
+                
                 #( #rpcs )*
             }
         }
@@ -389,7 +439,8 @@ impl ToTokens for Server {
     }
 }
 
-pub fn parse(_attrs: TokenStream, input: TokenStream) -> TokenStream {
-    let service = parse_macro_input!(input as Server);
-    service.into_token_stream().into()
+pub fn parse(attrs: TokenStream, input: TokenStream) -> TokenStream {
+    let mut server = parse_macro_input!(input as Server);
+    server.server_attrs = parse_macro_input!(attrs as ServerAttrs);
+    server.into_token_stream().into()
 }

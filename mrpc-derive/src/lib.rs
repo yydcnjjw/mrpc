@@ -1,6 +1,8 @@
 use proc_macro::TokenStream;
 
 mod common;
+mod attr;
+mod rpc;
 mod server;
 mod service;
 
