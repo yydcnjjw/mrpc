@@ -1,16 +1,11 @@
+mod stream;
 mod message;
+mod connect;
+mod accept;
+mod channel;
 
-#[cfg(all(feature = "websocket_web", target_arch = "wasm32"))]
-mod ws_web;
-
-#[cfg(all(feature = "websocket_web", target_arch = "wasm32"))]
-pub use ws_web::*;
-
-#[cfg(not(target_arch = "wasm32"))]
-mod ws;
-
-#[cfg(not(target_arch = "wasm32"))]
-pub use ws::*;
+pub use connect::connect;
+pub use accept::accept;
 
 
 

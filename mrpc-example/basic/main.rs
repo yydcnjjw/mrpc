@@ -1,21 +1,17 @@
-use mrpc::tokio::sync::mpsc;
-use std::sync::Arc;
+use mrpc::{formats::Json, transport, Server};
+
+use std::{sync::Arc, time::Duration};
 
 #[mrpc::service(message(serde))]
-trait Service {
+trait SubService {
     fn api1(a: i32, b: i32) -> i32;
     async fn api2(a: i32, b: String);
 }
 
-#[mrpc::server(message(serde))]
-enum Server {
-    Service(Service),
-}
+struct SubServiceImpl {}
 
-struct ServiceImpl {}
-
-#[mrpc::async_trait]
-impl Service for ServiceImpl {
+#[mrpc::service]
+impl SubService for SubServiceImpl {
     fn api1(self: Arc<Self>, a: i32, b: i32) -> i32 {
         println!("{}, {}", a, b);
 
@@ -27,53 +23,67 @@ impl Service for ServiceImpl {
     }
 }
 
-struct ServerImpl {}
+#[mrpc::service(message(serde))]
+enum MainService {
+    SubService(SubService),
+}
 
-#[mrpc::async_trait]
-impl Server for ServerImpl {
-    async fn create_service(self: Arc<Self>) -> mrpc::anyhow::Result<Arc<dyn Service>> {
-        Ok(Arc::new(ServiceImpl {}))
+struct MainServiceImpl {}
+
+#[mrpc::service]
+impl MainService for MainServiceImpl {
+    async fn create_sub_service(
+        self: Arc<Self>,
+    ) -> mrpc::anyhow::Result<mrpc::SharedService<SubServiceRequest, SubServiceResponse>> {
+        Ok(Arc::new(SubServiceImpl {}))
     }
 }
 
 #[tokio::main]
 async fn main() {
-    let (tx, rx) = mpsc::channel(32);
+    env_logger::init();
 
-    #[cfg(feature = "tcp")]
-    tokio::spawn(mrpc::net::tcp::reader("127.0.0.1:8081", tx.clone()));
+    let (tx, rx) = mrpc::sync::mpsc::channel(32);
 
-    #[cfg(feature = "websocket")]
-    tokio::spawn(mrpc::net::websocket::reader("127.0.0.1:8080", tx.clone()));
+    // // #[cfg(feature = "tcp")]
+    tokio::spawn(transport::accept_with_tcp(
+        "127.0.0.1:8080",
+        tx.clone(),
+        Json::default(),
+    ));
 
-    tokio::spawn(async move {
-        Arc::new(ServerImpl {}).serve(rx).await.unwrap();
-    });
+    // #[cfg(feature = "websocket")]
+    // tokio::spawn(transport::websocket::accept("127.0.0.1:8081", tx.clone()));
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    mrpc::spawn(Arc::new(MainServiceImpl {}).run_loop(rx));
 
     {
-        let cli = ServerClient { sender: tx };
+        let cli = mrpc::Client::<MainServiceApi>::new(Arc::new(tx));
 
-        println!("{:?}", cli.service().api1(1, 2).await);
-        println!("{:?}", cli.service().api2(1, 2.to_string()).await);
+        println!("{:?}", cli.sub_service().api1(1, 2).await);
+        println!("{:?}", cli.sub_service().api2(1, 2u8.to_string()).await);
     }
 
     #[cfg(feature = "tcp")]
     {
-        let tx = mrpc::net::tcp::writer("127.0.0.1:8081").await.unwrap();
-        let cli = ServerClient { sender: tx };
+        let cli =
+            mrpc::Client::<MainServiceApi>::connect_with_tcp("127.0.0.1:8080", Json::default())
+                .await
+                .unwrap();
 
-        println!("{:?}", cli.service().api1(1, 2).await);
-        println!("{:?}", cli.service().api2(1, 2.to_string()).await);
+        println!("{:?}", cli.sub_service().api1(1, 2).await);
+        println!("{:?}", cli.sub_service().api2(1, 2u8.to_string()).await);
     }
 
-    #[cfg(feature = "websocket")]
-    {
-        let tx = mrpc::net::websocket::writer("ws://127.0.0.1:8080")
-            .await
-            .unwrap();
-        let cli = ServerClient { sender: tx };
+    // #[cfg(feature = "websocket")]
+    // {
+    //     let cli = mrpc::Client::<MainServiceApi>::connect_with_ws("ws://127.0.0.1:8081")
+    //         .await
+    //         .unwrap();
 
-        println!("{:?}", cli.service().api1(1, 2).await);
-        println!("{:?}", cli.service().api2(1, 2.to_string()).await);
-    }
+    //     println!("{:?}", cli.sub_service().api1(1, 2).await);
+    //     println!("{:?}", cli.sub_service().api2(1, 2.to_string()).await);
+    // }
 }

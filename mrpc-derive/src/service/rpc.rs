@@ -9,11 +9,10 @@ use syn::{
     token, Attribute, FnArg, PatType, ReturnType, Token, Type,
 };
 
-use crate::attr::set_only_none;
-use crate::attr::MessageAttr;
+use super::attr::{set_only_none, MessageAttr};
 
 #[allow(dead_code)]
-pub struct RpcSignature {
+pub struct Signature {
     pub asyncness: Option<Token![async]>,
     pub fn_token: Token![fn],
     pub ident: Ident,
@@ -22,7 +21,7 @@ pub struct RpcSignature {
     pub output: Type,
 }
 
-impl Parse for RpcSignature {
+impl Parse for Signature {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let content;
         Ok(Self {
@@ -52,15 +51,15 @@ impl Parse for RpcSignature {
 }
 
 #[allow(dead_code)]
-pub struct RpcMethod {
-    pub attrs: RpcAttrs,
-    pub sig: RpcSignature,
+pub struct Method {
+    pub attrs: Attrs,
+    pub sig: Signature,
     pub semi_token: Option<Token![;]>,
 }
 
-impl Parse for RpcMethod {
+impl Parse for Method {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut rpc_attrs = RpcAttrs::new();
+        let mut rpc_attrs = Attrs::new();
         let attrs = input.call(Attribute::parse_outer)?;
         if attrs.len() > 1 {
             return Err(syn::Error::new(input.span(), "Expect one attr"));
@@ -90,17 +89,17 @@ impl Parse for RpcMethod {
     }
 }
 
-pub struct RpcAttrs {
+pub struct Attrs {
     pub message: Option<MessageAttr>,
 }
 
-impl RpcAttrs {
+impl Attrs {
     fn new() -> Self {
         Self { message: None }
     }
 }
 
-impl Parse for RpcAttrs {
+impl Parse for Attrs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let attr_vec = input.parse_terminated::<MessageAttr, Token![,]>(MessageAttr::parse)?;
 
@@ -117,7 +116,7 @@ impl Parse for RpcAttrs {
 #[allow(dead_code)]
 struct ParenRpcAttrs {
     paren_token: Paren,
-    inner: RpcAttrs,
+    inner: Attrs,
 }
 
 impl Parse for ParenRpcAttrs {

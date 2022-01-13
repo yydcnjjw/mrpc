@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+#[derive(Debug)]
 pub struct CloseFrame {
     pub code: u16,
     pub reason: Cow<'static, str>,

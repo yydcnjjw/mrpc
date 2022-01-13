@@ -12,7 +12,7 @@ use crate::Message;
 
 use super::message::WsRpcMessage;
 
-pub async fn writer<Request, Response, R>(
+pub async fn connect<Request, Response, R>(
     r: R,
 ) -> anyhow::Result<mpsc::Sender<Message<Request, Response>>>
 where

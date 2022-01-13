@@ -1,4 +1,5 @@
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::quote;
 use syn::{
     parenthesized,
     parse::{Parse, ParseStream},
@@ -120,5 +121,50 @@ impl Parse for MessageAttr {
             }
         }
         Ok(attr)
+    }
+}
+
+pub struct Attrs {
+    message: Option<MessageAttr>,
+}
+
+impl Attrs {
+    pub fn new() -> Self {
+        Self { message: None }
+    }
+
+    pub fn gen_message_attr(&self) -> TokenStream2 {
+        let mut token = TokenStream2::new();
+
+        if let Some(attr) = &self.message {
+            if let Some(_) = &attr.debug {
+                token.extend(quote! {
+                    #[derive(Debug)]
+                });
+            }
+
+            if let Some(_) = &attr.serde {
+                token.extend(quote! {
+                    #[derive(mrpc::serde::Serialize,mrpc::serde::Deserialize)]
+                    #[serde(crate = "mrpc::serde")]
+                });
+            }
+        }
+
+        token
+    }
+}
+
+impl Parse for Attrs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let attr_vec = input.parse_terminated::<MessageAttr, Token![,]>(MessageAttr::parse)?;
+
+        let mut message = None;
+
+        for attr in attr_vec {
+            set_only_none(&mut message, attr, input.span())?;
+        }
+
+        Ok(Self { message })
     }
 }
