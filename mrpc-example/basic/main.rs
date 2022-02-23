@@ -3,7 +3,7 @@ use mrpc::Server;
 use std::sync::Arc;
 
 #[mrpc::service(message(serde))]
-trait SubService {
+pub trait SubService {
     fn api1(a: i32, b: i32) -> i32;
     async fn api2(a: i32, b: String);
 }

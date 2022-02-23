@@ -61,8 +61,16 @@ impl ItemTrait {
         self.ident.clone()
     }
 
+    fn shared_service_ident(&self) -> Ident {
+        format_ident!("Shared{}", self.service_ident())
+    }
+
     fn api_ident(&self) -> Ident {
         format_ident!("{}Api", self.ident)
+    }
+
+    fn client_ident(&self) -> Ident {
+        format_ident!("{}Client", self.ident)
     }
 
     fn gen_service_serve(&self) -> TokenStream2 {
@@ -108,7 +116,14 @@ impl ItemTrait {
     }
 
     fn gen_service(&self) -> TokenStream2 {
-        let (vis, service_ident, items) = (&self.vis, self.service_ident(), &self.items);
+        let (vis, service_ident, items, shared_service_ident, request_ident, response_ident) = (
+            &self.vis,
+            self.service_ident(),
+            &self.items,
+            self.shared_service_ident(),
+            self.request_ident(),
+            self.response_ident(),
+        );
 
         let rpcs = items.iter().map(|rpc::Method { attrs: _, sig, .. }| {
             let rpc::Signature {
@@ -136,6 +151,8 @@ impl ItemTrait {
 
                 #fn_serve
             }
+
+            #vis type #shared_service_ident = mrpc::SharedService<#request_ident, #response_ident>;
         }
     }
 
@@ -210,11 +227,12 @@ impl ItemTrait {
     }
 
     fn gen_api(&self) -> TokenStream2 {
-        let (vis, api_ident, request_ident, response_ident) = (
+        let (vis, api_ident, request_ident, response_ident, client_ident) = (
             &self.vis,
             self.api_ident(),
             self.request_ident(),
             self.response_ident(),
+            self.client_ident(),
         );
 
         let rpcs = self.items.iter().map(|rpc::Method { attrs: _, sig, .. }| {
@@ -281,6 +299,8 @@ impl ItemTrait {
                     self.sender.clone()
                 }
             }
+
+            #vis type #client_ident = mrpc::Client<#api_ident>;
         }
     }
 }

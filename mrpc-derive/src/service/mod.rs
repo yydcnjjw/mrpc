@@ -1,16 +1,16 @@
 mod attr;
+mod ident;
 mod item_enum;
 mod item_impl;
 mod item_trait;
 mod rpc;
-mod ident;
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::ToTokens;
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input, Token,
+    parse_macro_input, Token, Visibility,
 };
 
 use self::{
@@ -35,15 +35,18 @@ impl Service {
 
 impl Parse for Service {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.peek(Token![trait]) {
+        let fork = input.fork();
+        fork.parse::<Visibility>()?;
+
+        if fork.peek(Token![trait]) {
             Ok(Service::Trait(input.parse()?))
-        } else if input.peek(Token![enum]) {
+        } else if fork.peek(Token![enum]) {
             Ok(Service::Enum(input.parse()?))
-        } else if input.peek(Token![impl]) {
+        } else if fork.peek(Token![impl]) {
             Ok(Service::Impl(input.parse()?))
         } else {
             return Err(syn::Error::new(
-                input.span(),
+                fork.span(),
                 "#[mrpc::service] only supports trait, enum, impl",
             ));
         }

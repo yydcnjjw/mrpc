@@ -24,6 +24,7 @@ pub trait Api {
     }
 }
 
+#[derive(Clone)]
 pub struct Client<ClientApi> {
     api: ClientApi,
 }

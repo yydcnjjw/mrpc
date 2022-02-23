@@ -78,8 +78,16 @@ impl ItemEnum {
         self.ident.clone()
     }
 
+    fn shared_service_ident(&self) -> Ident {
+        format_ident!("Shared{}", self.service_ident())
+    }
+
     fn api_ident(&self) -> Ident {
         format_ident!("{}Api", self.ident)
+    }
+
+    fn client_ident(&self) -> Ident {
+        format_ident!("{}Client", self.ident)
     }
 
     fn create_service_ident(ident: &Ident) -> Ident {
@@ -182,7 +190,12 @@ impl ItemEnum {
     }
 
     fn gen_service(&self) -> TokenStream2 {
-        let (vis, service_ident) = (&self.vis, self.service_ident());
+        let (vis,
+             service_ident,
+             shared_service_ident,
+             request_ident,
+             response_ident
+        ) = (&self.vis, self.service_ident(), self.shared_service_ident(), self.request_ident(), self.response_ident());
 
         let fn_create_services = self.gen_service_create_services();
         let fn_serve = self.gen_service_serve();
@@ -194,6 +207,8 @@ impl ItemEnum {
                 
                 #fn_serve
             }
+
+            #vis type #shared_service_ident = mrpc::SharedService<#request_ident, #response_ident>;
         }
     }
 
@@ -252,11 +267,12 @@ impl ItemEnum {
     }
 
     fn gen_api(&self) -> TokenStream2 {
-        let (vis, api_ident, request_ident, response_ident) = (
+        let (vis, api_ident, request_ident, response_ident, client_ident) = (
             &self.vis,
             self.api_ident(),
             self.request_ident(),
             self.response_ident(),
+            self.client_ident()
         );
 
         let (rpcs, service_senders): (Vec<TokenStream2>, Vec<TokenStream2>) = self.services.iter().map(
@@ -336,6 +352,8 @@ impl ItemEnum {
                     self.sender.clone()
                 }
             }
+
+            #vis type #client_ident = mrpc::Client<#api_ident>;
             
             #( #service_senders )*
         }

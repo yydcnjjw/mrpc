@@ -1,6 +1,6 @@
 pub mod client;
 pub mod error;
-mod message;
+pub mod message;
 mod server;
 mod service;
 pub mod transport;

@@ -8,8 +8,3 @@ mod common;
 pub fn service(attr: TokenStream, input: TokenStream) -> TokenStream {
     service::parse(attr, input)
 }
-
-// #[proc_macro_derive(Service)]
-// pub fn derive_service(input: TokenStream) -> TokenStream {
-    
-// }
