@@ -1,6 +1,6 @@
-use mrpc::{formats::Json, transport, Server};
+use mrpc::Server;
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 #[mrpc::service(message(serde))]
 trait SubService {
@@ -43,19 +43,19 @@ impl MainService for MainServiceImpl {
 async fn main() {
     env_logger::init();
 
-    let (tx, rx) = mrpc::sync::mpsc::channel(32);
+    let (tx, rx) = mrpc::transport::native::channel(32);
 
     // // #[cfg(feature = "tcp")]
-    tokio::spawn(transport::accept_with_tcp(
-        "127.0.0.1:8080",
-        tx.clone(),
-        Json::default(),
-    ));
+    // tokio::spawn(transport::accept_with_tcp(
+    //     "127.0.0.1:8080",
+    //     tx.clone(),
+    //     Json::default(),
+    // ));
 
     // #[cfg(feature = "websocket")]
     // tokio::spawn(transport::websocket::accept("127.0.0.1:8081", tx.clone()));
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // tokio::time::sleep(Duration::from_secs(2)).await;
 
     mrpc::spawn(Arc::new(MainServiceImpl {}).run_loop(rx));
 
@@ -66,16 +66,16 @@ async fn main() {
         println!("{:?}", cli.sub_service().api2(1, 2u8.to_string()).await);
     }
 
-    #[cfg(feature = "tcp")]
-    {
-        let cli =
-            mrpc::Client::<MainServiceApi>::connect_with_tcp("127.0.0.1:8080", Json::default())
-                .await
-                .unwrap();
+    // #[cfg(feature = "tcp")]
+    // {
+    //     let cli =
+    //         mrpc::Client::<MainServiceApi>::connect_with_tcp("127.0.0.1:8080", Json::default())
+    //             .await
+    //             .unwrap();
 
-        println!("{:?}", cli.sub_service().api1(1, 2).await);
-        println!("{:?}", cli.sub_service().api2(1, 2u8.to_string()).await);
-    }
+    //     println!("{:?}", cli.sub_service().api1(1, 2).await);
+    //     println!("{:?}", cli.sub_service().api2(1, 2u8.to_string()).await);
+    // }
 
     // #[cfg(feature = "websocket")]
     // {

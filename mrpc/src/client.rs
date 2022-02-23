@@ -1,12 +1,9 @@
 use std::{ops::Deref, sync::Arc};
 
 use async_trait::async_trait;
-use futures::{SinkExt, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::net::ToSocketAddrs;
-use tokio_serde::{Deserializer, Serializer};
 
-use crate::transport::{self, Connector, TranportMesssage};
+use crate::transport;
 
 pub type Sender<Request, Response> = Arc<dyn transport::Sender<Request, Response> + Send + Sync>;
 
@@ -51,41 +48,41 @@ where
         }
     }
 
-    pub async fn connect_with_tcp<Addr, Codec>(addr: Addr, codec: Codec) -> anyhow::Result<Self>
-    where
-        Addr: ToSocketAddrs,
-        Codec: Serializer<TranportMesssage<ClientApi::Request>>
-            + Deserializer<TranportMesssage<ClientApi::Response>>
-            + Unpin
-            + Send
-            + 'static,
-        <Codec as Serializer<TranportMesssage<ClientApi::Request>>>::Error: Into<std::io::Error>,
-        <Codec as Deserializer<TranportMesssage<ClientApi::Response>>>::Error: Into<std::io::Error>,
-        std::io::Error:
-            From<
-                <Codec as tokio_serde::Deserializer<
-                    TranportMesssage<<ClientApi as Api>::Response>,
-                >>::Error,
-            >,
-    {
-        let s = transport::tcp::connect::<
-            _,
-            TranportMesssage<ClientApi::Response>,
-            TranportMesssage<ClientApi::Request>,
-            _,
-        >(addr, codec)
-        .await?;
+    // pub async fn connect_with_tcp<Addr, Codec>(addr: Addr, codec: Codec) -> anyhow::Result<Self>
+    // where
+    //     Addr: ToSocketAddrs,
+    //     Codec: Serializer<TranportMesssage<ClientApi::Request>>
+    //         + Deserializer<TranportMesssage<ClientApi::Response>>
+    //         + Unpin
+    //         + Send
+    //         + 'static,
+    //     <Codec as Serializer<TranportMesssage<ClientApi::Request>>>::Error: Into<std::io::Error>,
+    //     <Codec as Deserializer<TranportMesssage<ClientApi::Response>>>::Error: Into<std::io::Error>,
+    //     std::io::Error:
+    //         From<
+    //             <Codec as tokio_serde::Deserializer<
+    //                 TranportMesssage<<ClientApi as Api>::Response>,
+    //             >>::Error,
+    //         >,
+    // {
+    //     let s = transport::tcp::connect::<
+    //         _,
+    //         TranportMesssage<ClientApi::Response>,
+    //         TranportMesssage<ClientApi::Request>,
+    //         _,
+    //     >(addr, codec)
+    //     .await?;
 
-        let (sink, source) = s.split();
+    //     let (sink, source) = s.split();
 
-        let sink = sink.sink_map_err(|e| anyhow::anyhow!(e));
+    //     let sink = sink.sink_map_err(|e| anyhow::anyhow!(e));
 
-        let source = source.map_err(|e| anyhow::anyhow!(e));
+    //     let source = source.map_err(|e| anyhow::anyhow!(e));
 
-        Ok(Self {
-            api: ClientApi::create(Connector::new(sink, source).await),
-        })
-    }
+    //     Ok(Self {
+    //         api: ClientApi::create(Connector::new(sink, source).await),
+    //     })
+    // }
 
     // pub async fn connect_with_ws<R, Codec>(r: R, codec: Codec) -> anyhow::Result<Self>
     // where

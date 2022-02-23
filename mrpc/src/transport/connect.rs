@@ -17,7 +17,7 @@ use crate::{
 
 pub struct Connector<Sink, Source, Request, Response> {
     sink: Arc<Mutex<Sink>>,
-    buf: Arc<RwLock<HashMap<usize, Message<Response>>>>,
+    buf: Arpc<RwLock<HashMap<usize, Message<Response>>>>,
     item: PhantomData<fn(Request, Source)>,
 }
 
