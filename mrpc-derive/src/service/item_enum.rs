@@ -90,15 +90,11 @@ impl ItemEnum {
         format_ident!("{}Client", self.ident)
     }
 
-    fn create_service_ident(ident: &Ident) -> Ident {
-        format_ident!("create_{}", ident_to_case(ident, Case::Snake))
+    fn get_service_ident(ident: &Ident) -> Ident {
+        format_ident!("get_{}", ident_to_case(ident, Case::Snake))
     }
 
-    fn service_var_ident(ident: &Ident) -> Ident {
-        format_ident!("{}_var", ident_to_case(ident, Case::Snake))
-    }
-
-    fn gen_service_create_services(&self) -> Vec<TokenStream2> {
+    fn gen_service_get_services(&self) -> Vec<TokenStream2> {
         self
             .services
             .iter()
@@ -109,20 +105,18 @@ impl ItemEnum {
                     paren_token: _,
                     ty,
                 }| {
-                    let create_service_ident =
-                        Self::create_service_ident(ident);
+                    let get_service_ident =
+                        Self::get_service_ident(ident);
                     let service_request_ty = service_request_ty(ty.clone());
                     let service_response_ty = service_response_ty(ty.clone());
 
                     quote! {
-                        async fn #create_service_ident(
+                        async fn #get_service_ident(
                             self: mrpc::sync::Arc<Self>)
-                            -> mrpc::anyhow::Result<mrpc::SharedService<
-                                    #service_request_ty, #service_response_ty
-                                >>
-                        where Self: Send + Sync + 'static {
-                            mrpc::anyhow::bail!("service is not implemented");
-                        }
+                            -> mrpc::SharedService<
+                                #service_request_ty, #service_response_ty
+                            >
+                        where Self: Send + Sync + 'static;
                     }
                 },
             )
@@ -132,7 +126,7 @@ impl ItemEnum {
     fn gen_service_serve(&self) -> TokenStream2 {
         let (request_ident, response_ident) = (self.request_ident(), self.response_ident());
 
-        let (static_services, match_items): (Vec<_>, Vec<_>) = self
+        let match_items = self
             .services
             .iter()
             .map(
@@ -140,48 +134,25 @@ impl ItemEnum {
                     attrs: _,
                     ident,
                     paren_token: _,
-                    ty,
+                    ty: _,
                 }| {
-                    let create_service_ident = Self::create_service_ident(ident);
-                    let static_service_ident = Self::service_var_ident(ident);
-                    let service_request_ty = service_request_ty(ty.clone());
-                    let service_response_ty = service_response_ty(ty.clone());
-                    
-                    (
-                        quote! {
-                            static #static_service_ident: mrpc::sync::OnceCell<mrpc::SharedService<
-                                    #service_request_ty, #service_response_ty
-                                >> =
-                                mrpc::sync::OnceCell::const_new();
-                        },
-                        quote! {
-                            #request_ident::#ident(service_request) => {
-                                let service = 
-                                    match #static_service_ident.get_or_try_init(|| async move {
-                                        Self::#create_service_ident(self).await
-                                    }).await {
-                                        Ok(v) => v.clone(),
-                                        Err(e) => {
-                                            mrpc::anyhow::bail!("Failed to initialize {}: {:?}", stringify!(#ident), e);
-                                        }
-                                    };
+                    let get_service_ident = Self::get_service_ident(ident);
 
-                                Ok(#response_ident::#ident(service.serve(service_request).await?))
-                            }
-                        },
-                    )
+                    quote! {
+                        #request_ident::#ident(service_request) => {
+                            let service = Self::#get_service_ident(self).await;
+
+                            Ok(#response_ident::#ident(service.serve(service_request).await?))
+                        }
+                    }
                 },
-            )
-            .unzip();
+            );
 
         quote! {
             async fn serve(self: mrpc::sync::Arc<Self>,
                            request: #request_ident)
                            -> mrpc::anyhow::Result<#response_ident>
             where Self: Send + Sync + 'static {
-
-                #( #static_services )*
-
                 match request {
                     #( #match_items )*
                 }
@@ -197,13 +168,13 @@ impl ItemEnum {
              response_ident
         ) = (&self.vis, self.service_ident(), self.shared_service_ident(), self.request_ident(), self.response_ident());
 
-        let fn_create_services = self.gen_service_create_services();
+        let fn_get_services = self.gen_service_get_services();
         let fn_serve = self.gen_service_serve();
 
         quote! {
             #[mrpc::async_trait]
             #vis trait #service_ident {
-                #( #fn_create_services )*
+                #( #fn_get_services )*
                 
                 #fn_serve
             }

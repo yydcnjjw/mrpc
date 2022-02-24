@@ -28,14 +28,22 @@ enum MainService {
     SubService(SubService),
 }
 
-struct MainServiceImpl {}
+struct MainServiceImpl {
+    sub_service: Arc<SubServiceImpl>,
+}
+
+impl MainServiceImpl {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            sub_service: Arc::new(SubServiceImpl {}),
+        })
+    }
+}
 
 #[mrpc::service]
 impl MainService for MainServiceImpl {
-    async fn create_sub_service(
-        self: Arc<Self>,
-    ) -> mrpc::anyhow::Result<mrpc::SharedService<SubServiceRequest, SubServiceResponse>> {
-        Ok(Arc::new(SubServiceImpl {}))
+    async fn get_sub_service(self: Arc<Self>) -> SharedSubService {
+        self.sub_service.clone()
     }
 }
 
@@ -57,7 +65,7 @@ async fn main() {
 
     // tokio::time::sleep(Duration::from_secs(2)).await;
 
-    mrpc::spawn(Arc::new(MainServiceImpl {}).run_loop(rx));
+    mrpc::spawn(MainServiceImpl::new().run_loop(rx));
 
     {
         let cli = mrpc::Client::<MainServiceApi>::new(Arc::new(tx));
