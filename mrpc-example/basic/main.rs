@@ -1,97 +1,116 @@
-use mrpc::Server;
+#![feature(type_alias_impl_trait)]
 
-use std::sync::Arc;
+use std::{future::Future, sync::Arc, time::Duration};
 
-#[mrpc::service(message(serde))]
-pub trait SubService {
+use mrpc::Dispatcher;
+use tokio::net::TcpListener;
+
+#[mrpc::service]
+pub trait ServiceA {
     fn api1(a: i32, b: i32) -> i32;
-    async fn api2(a: i32, b: String);
+    fn api2(a: i32, b: String);
 }
 
-struct SubServiceImpl {}
+struct ServiceAImpl {}
 
-#[mrpc::service]
-impl SubService for SubServiceImpl {
-    fn api1(self: Arc<Self>, a: i32, b: i32) -> i32 {
+#[mrpc::service_impl]
+impl ServiceA for ServiceAImpl {
+    async fn api1(&self, a: i32, b: i32) -> mrpc::AnyResult<i32> {
         println!("{}, {}", a, b);
 
-        10
+        Ok(10)
     }
-
-    async fn api2(self: Arc<Self>, a: i32, b: String) {
+    fn api2(&self, a: i32, b: String) -> mrpc::AnyResult<()> {
         println!("{}, {}", a, b);
-    }
-}
 
-#[mrpc::service(message(serde))]
-enum MainService {
-    SubService(SubService),
-}
-
-struct MainServiceImpl {
-    sub_service: Arc<SubServiceImpl>,
-}
-
-impl MainServiceImpl {
-    fn new() -> Arc<Self> {
-        Arc::new(Self {
-            sub_service: Arc::new(SubServiceImpl {}),
-        })
+        Ok(())
     }
 }
 
 #[mrpc::service]
-impl MainService for MainServiceImpl {
-    async fn get_sub_service(self: Arc<Self>) -> SharedSubService {
-        self.sub_service.clone()
+pub trait ServiceB {
+    fn api1(a: i32, b: i32) -> i32;
+    fn api2(a: i32, b: String);
+}
+
+struct ServiceBImpl {}
+
+#[mrpc::service_impl]
+impl ServiceB for ServiceBImpl {
+    async fn api1(&self, a: i32, b: i32) -> mrpc::AnyResult<i32> {
+        println!("{}, {}", a, b);
+
+        Ok(10)
     }
+    fn api2(&self, a: i32, b: String) -> mrpc::AnyResult<()> {
+        println!("{}, {}", a, b);
+
+        Ok(())
+    }
+}
+
+#[mrpc::router]
+enum Service {
+    ServiceA(ServiceA),
+    ServiceB(ServiceB),
+}
+
+struct ServiceImpl {
+    a: ServiceAImpl,
+    b: ServiceBImpl,
+}
+
+impl ServiceRouter for ServiceImpl {
+    type ServiceA = ServiceAImpl;
+
+    type ServiceB = ServiceBImpl;
+
+    fn service_a(&self) -> &Self::ServiceA {
+        &self.a
+    }
+
+    fn service_b(&self) -> &Self::ServiceB {
+        &self.b
+    }
+}
+
+async fn test() {
+    env_logger::init();
+
+    tokio::spawn(async move {
+        let service = Arc::new(ServiceImpl {
+            a: ServiceAImpl {},
+            b: ServiceBImpl {},
+        });
+
+        let try_socket = TcpListener::bind("127.0.0.1:8080").await;
+        let listener = try_socket.expect("Failed to bind");
+
+        while let Ok((stream, _)) = listener.accept().await {
+            let service = service.clone();
+            tokio::spawn(async move {
+                let s = mrpc::WsStream::accept(stream).await.unwrap();
+
+                mrpc::TransportReceiver::<ServiceRequest, ServiceResponse>::new()
+                    .run_loop(s, service);
+            });
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let s = mrpc::WsStream::connect("ws://127.0.0.1:8080")
+        .await
+        .unwrap();
+
+    let cli = mrpc::TransportSender::new(s).unwrap();
+
+    println!("{:?}", cli.service_a().api1(1, 2).await);
+
+    println!("{:?}", cli.service_b().api2(1, "abc".into()).await);
 }
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
-
-    let (tx, rx) = mrpc::transport::native::channel(32);
-
-    // // #[cfg(feature = "tcp")]
-    // tokio::spawn(transport::accept_with_tcp(
-    //     "127.0.0.1:8080",
-    //     tx.clone(),
-    //     Json::default(),
-    // ));
-
-    // #[cfg(feature = "websocket")]
-    // tokio::spawn(transport::websocket::accept("127.0.0.1:8081", tx.clone()));
-
-    // tokio::time::sleep(Duration::from_secs(2)).await;
-
-    mrpc::spawn(MainServiceImpl::new().run_loop(rx));
-
-    {
-        let cli = mrpc::Client::<MainServiceApi>::new(Arc::new(tx));
-
-        println!("{:?}", cli.sub_service().api1(1, 2).await);
-        println!("{:?}", cli.sub_service().api2(1, 2u8.to_string()).await);
-    }
-
-    // #[cfg(feature = "tcp")]
-    // {
-    //     let cli =
-    //         mrpc::Client::<MainServiceApi>::connect_with_tcp("127.0.0.1:8080", Json::default())
-    //             .await
-    //             .unwrap();
-
-    //     println!("{:?}", cli.sub_service().api1(1, 2).await);
-    //     println!("{:?}", cli.sub_service().api2(1, 2u8.to_string()).await);
-    // }
-
-    // #[cfg(feature = "websocket")]
-    // {
-    //     let cli = mrpc::Client::<MainServiceApi>::connect_with_ws("ws://127.0.0.1:8081")
-    //         .await
-    //         .unwrap();
-
-    //     println!("{:?}", cli.sub_service().api1(1, 2).await);
-    //     println!("{:?}", cli.sub_service().api2(1, 2.to_string()).await);
-    // }
+    test().await;
 }

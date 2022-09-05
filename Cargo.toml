@@ -1,6 +1,6 @@
 [workspace]
 members = [
   "mrpc",
-  "mrpc-derive",
+  "mrpc-macro",
   "mrpc-example",
 ]
