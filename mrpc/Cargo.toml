@@ -13,7 +13,7 @@ websocket = ["tokio/net", "tokio-tungstenite/connect"]
 websocket_web = []
 
 [dependencies]
-mrpc-derive = { path = "../mrpc-derive" }
+mrpc-macro = { path = "../mrpc-macro" }
 
 bytes = "1.1"
 url = "2.2"
